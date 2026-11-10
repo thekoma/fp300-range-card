@@ -1,0 +1,10 @@
+{
+  "name": "fp300-range-card",
+  "version": "1.0.0",
+  "description": "Home Assistant dashboard card to configure the distance bands of an Aqara FP300 through Zigbee2MQTT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test --experimental-test-coverage tests/"
+  }
+}

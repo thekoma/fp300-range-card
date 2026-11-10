@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FP300 Range Card · demo</title>
+    <style>
+      /* Minimal stand-in for the Home Assistant theme variables. */
+      :root {
+        --primary-color: #03a9f4;
+        --accent-color: #ff9800;
+        --primary-text-color: #212121;
+        --secondary-text-color: #727272;
+        --text-primary-color: #fff;
+        --divider-color: #e0e0e0;
+        --card-background-color: #fff;
+        --disabled-color: #bdbdbd;
+        --warning-color: #ffa600;
+        --error-color: #db4437;
+        --success-color: #43a047;
+        --info-color: #039be5;
+        --page: #fafafa;
+      }
+      :root[data-theme='dark'] {
+        --primary-text-color: #e1e1e1;
+        --secondary-text-color: #9b9b9b;
+        --divider-color: #3a3a3a;
+        --card-background-color: #1c1c1c;
+        --disabled-color: #6f6f6f;
+        --page: #111;
+      }
+      body { margin: 0; padding: 16px; background: var(--page); color: var(--primary-text-color);
+        font-family: Roboto, system-ui, sans-serif; }
+      .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 420px)); gap: 16px; }
+      ha-card { background: var(--card-background-color); border: 1px solid var(--divider-color);
+        border-radius: 12px; }
+      .tools { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+      .tools button { min-height: 36px; }
+      pre { white-space: pre-wrap; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class="tools">
+      <button id="theme">Tema chiaro/scuro</button>
+      <button id="wake">Sveglia il sensore (consegna la coda)</button>
+      <button id="drift">Il sensore riporta fasce diverse</button>
+      <button id="distance">Nuova distanza</button>
+      <button id="presence">Presenza sì/no</button>
+      <button id="offline">Z2M offline/online</button>
+    </div>
+    <div class="cards">
+      <fp300-range-card id="prima"></fp300-range-card>
+      <fp300-range-card id="seconda"></fp300-range-card>
+      <fp300-range-card id="condivisa"></fp300-range-card>
+      <fp300-range-card id="semplice"></fp300-range-card>
+    </div>
+    <h3>Messaggi pubblicati</h3>
+    <pre id="log"></pre>
+
+    <script type="module">
+      import { maskToComposite, compositeToMask } from '../fp300-range-card.js';
+
+      // Fake Zigbee2MQTT + Home Assistant: writes are queued until the sensor "wakes up".
+      const ENTITY = 'sensor.fp300_raw_fp300_a';
+      const published = [];
+      const queue = [];
+      const APPLIED_ENTITY = 'sensor.fp300_applied_fp300_a';
+      let attributes = payload(0xffffff, { presence: true });
+      let appliedObj = { state: 'unknown', attributes: {} };
+      let online = true;
+
+      function payload(mask, extra = {}) {
+        return {
+          detection_range: mask,
+          detection_range_prefix: 768,
+          detection_range_composite: maskToComposite(mask),
+          ...extra,
+        };
+      }
+
+      function pushState() {
+        const stateObj = online
+          ? { state: String(attributes.detection_range), attributes }
+          : { state: 'unavailable', attributes: {} };
+        const hass = {
+          states: { [ENTITY]: stateObj, [APPLIED_ENTITY]: appliedObj },
+          callService: async (domain, service, data) => {
+            published.push({ domain, service, ...data });
+            document.getElementById('log').textContent = JSON.stringify(published, null, 2);
+            if (data.topic.endsWith('/set')) queue.push(JSON.parse(data.payload));
+            if (data.topic.startsWith('fp300_range_card/')) {
+              // The retained topic comes back through the second MQTT sensor.
+              const record = JSON.parse(data.payload);
+              appliedObj = { state: record.phase, attributes: record };
+              setTimeout(pushState, 10);
+            }
+          },
+        };
+        for (const card of document.querySelectorAll('fp300-range-card')) card.hass = hass;
+      }
+
+      const floorPlan =
+        'data:image/svg+xml,' +
+        encodeURIComponent(
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">' +
+            '<rect width="400" height="300" fill="#ddd" stroke="#555" stroke-width="6"/>' +
+            '<rect x="20" y="20" width="120" height="70" fill="#9bc"/>' +
+            '<rect x="280" y="180" width="100" height="100" fill="#cb9"/></svg>',
+        );
+
+      document.getElementById('prima').setConfig({
+        entity: ENTITY,
+        friendly_name: 'fp300_a',
+        title: 'FP300 A',
+      });
+      document.getElementById('seconda').setConfig({
+        entity: ENTITY,
+        friendly_name: 'fp300_b',
+        title: 'FP300 con planimetria',
+        background: { image: floorPlan, width_m: 8, sensor_x: 0.5, sensor_y: 1, opacity: 0.6 },
+      });
+      // Two more cards share the applied state through the (fake) retained topic.
+      document.getElementById('condivisa').setConfig({
+        entity: ENTITY,
+        friendly_name: 'fp300_a',
+        title: 'Completa, stato condiviso',
+        applied_entity: APPLIED_ENTITY,
+      });
+      document.getElementById('semplice').setConfig({
+        entity: ENTITY,
+        friendly_name: 'fp300_a',
+        title: 'Sensore di presenza',
+        simple: true,
+        applied_entity: APPLIED_ENTITY,
+      });
+      pushState();
+
+      const on = (id, handler) => document.getElementById(id).addEventListener('click', handler);
+      on('theme', () => {
+        const root = document.documentElement;
+        root.dataset.theme = root.dataset.theme === 'dark' ? '' : 'dark';
+      });
+      on('wake', () => {
+        for (const item of queue.splice(0)) {
+          if (item.detection_range_composite) {
+            attributes = { ...attributes, ...payload(compositeToMask(item.detection_range_composite)) };
+          }
+        }
+        pushState();
+      });
+      on('drift', () => {
+        attributes = { ...attributes, ...payload(0x0000ff) };
+        pushState();
+      });
+      on('distance', () => {
+        attributes = { ...attributes, target_distance: Number((Math.random() * 7).toFixed(2)) };
+        pushState();
+      });
+      on('presence', () => {
+        attributes = { ...attributes, presence: !attributes.presence };
+        pushState();
+      });
+      on('offline', () => {
+        online = !online;
+        pushState();
+      });
+
+      // Exposed for automated smoke checks.
+      window.demo = { published, queue };
+    </script>
+  </body>
+</html>
