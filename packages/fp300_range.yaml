@@ -1,0 +1,57 @@
+# FP300 Range Card: MQTT sensors.
+#
+# Two sensors per FP300:
+# - "raw" subscribes to the Zigbee2MQTT device topic and keeps the whole JSON
+#   payload in its attributes, where the card reads it (card option `entity`).
+# - "applied" reads back the bands last applied from a card, which the card
+#   keeps on a retained topic outside Zigbee2MQTT, so that every dashboard shows
+#   the same pending / changed notices (card option `applied_entity`).
+#
+# To add an FP300, copy both blocks and replace the friendly name in `name`,
+# `unique_id`, `state_topic` and `json_attributes_topic`.
+# If your base topic is not `zigbee2mqtt`, replace it in the raw sensors.
+
+mqtt:
+  sensor:
+    - name: "FP300 raw fp300_a"
+      unique_id: fp300_raw_fp300_a
+      icon: mdi:radar
+      state_topic: "zigbee2mqtt/fp300_a"
+      # State = the 24-bit band mask (16777215 = all bands enabled).
+      value_template: "{{ value_json.detection_range | default('unknown') }}"
+      json_attributes_topic: "zigbee2mqtt/fp300_a"
+      availability_topic: "zigbee2mqtt/bridge/state"
+      # Works with both the JSON ({"state":"online"}) and the legacy plain payload.
+      availability_template: "{{ 'online' if 'online' in value else 'offline' }}"
+
+    - name: "FP300 raw fp300_b"
+      unique_id: fp300_raw_fp300_b
+      icon: mdi:radar
+      state_topic: "zigbee2mqtt/fp300_b"
+      value_template: "{{ value_json.detection_range | default('unknown') }}"
+      json_attributes_topic: "zigbee2mqtt/fp300_b"
+      availability_topic: "zigbee2mqtt/bridge/state"
+      availability_template: "{{ 'online' if 'online' in value else 'offline' }}"
+
+    - name: "FP300 applied fp300_a"
+      unique_id: fp300_applied_fp300_a
+      icon: mdi:content-save-check-outline
+      state_topic: "fp300_range_card/fp300_a/applied"
+      # State = pending, written or none. Kept in the recorder: it changes rarely
+      # and gives a history of what was applied.
+      value_template: "{{ value_json.phase | default('none') }}"
+      json_attributes_topic: "fp300_range_card/fp300_a/applied"
+
+    - name: "FP300 applied fp300_b"
+      unique_id: fp300_applied_fp300_b
+      icon: mdi:content-save-check-outline
+      state_topic: "fp300_range_card/fp300_b/applied"
+      value_template: "{{ value_json.phase | default('none') }}"
+      json_attributes_topic: "fp300_range_card/fp300_b/applied"
+
+# The raw sensors change at every Zigbee2MQTT message and carry large attributes:
+# keep them out of the recorder database.
+recorder:
+  exclude:
+    entity_globs:
+      - sensor.fp300_raw_*
